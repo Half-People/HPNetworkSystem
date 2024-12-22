@@ -2,6 +2,8 @@
 ### This is a highly open network system based on command mode.
 ### All you need is a few lines of code. Add the required functionality. No need to manage thread/socket yourself...
 
+![System Node Struct ](https://github.com/Half-People/HPNetworkSystem/blob/main/NSBG.png?raw=true)
+
 # Contains subsystems
 - [x] TCP/IPV4 Server[^1] / Client
 - [ ] TCP/IPV6 
