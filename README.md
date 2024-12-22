@@ -12,6 +12,11 @@
 - [x] ThreadPool
 - [x] CommandRegistrar
 - [x] Global Context (Can synchronize data)
+### Currently available platforms.
+- [x] Windows 7 - 11
+- [x] Windows Server 2008 - 2025
+- [ ] Linux
+- [ ] MacOS 
 
 > [!NOTE]
 > Requires dependence on third-party libraries [nlohmann/json](https://github.com/nlohmann/json)
