@@ -17,7 +17,8 @@
 # System structure.
 ![System Node Struct ](https://github.com/Half-People/HPNetworkSystem/blob/main/HPNS.jpg?raw=true)
 
-# Example
+# Example      
+### [For more in-depth examples or functions, please refer to the Wiki](https://github.com/Half-People/HPNetworkSystem/wiki)
 ## Server
 ```cpp
 #include <iostream>
