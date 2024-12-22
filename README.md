@@ -15,3 +15,4 @@
 > Requires dependence on third-party libraries [nlohmann/json](https://github.com/nlohmann/json)
 
 # System structure.
+![System Node Struct ](md_file/HPNS.drawio.svg)
