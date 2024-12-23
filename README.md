@@ -5,7 +5,7 @@
 ![System Node Struct ](https://github.com/Half-People/HPNetworkSystem/blob/main/NSBG.png?raw=true)
 
 # Contains subsystems
-- [x] TCP/IPV4 Server[^1] / Client
+- [x] TCP/IPV4 Server[^1] / Client[^2]
 - [ ] TCP/IPV6 
 - [ ] UDP/IPV4
 - [ ] UDP/IPV6
@@ -27,7 +27,7 @@
 # Example      
 ### [For more in-depth examples or functions, please refer to the Wiki](https://github.com/Half-People/HPNetworkSystem/wiki)
 ## Server
-```cpp
+[^1]: ```cpp
 #include <iostream>
 #include <HPNS.h>
 
@@ -85,7 +85,7 @@ int main()
 
 ## Client
 
-```cpp
+[^2]:```cpp
 #include <HPNS.h>
 
 HPNS_REG_COMMAND(server_message, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device)
