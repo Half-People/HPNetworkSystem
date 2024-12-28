@@ -3,8 +3,27 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "HPNS.h"
-
+#ifdef _WIN32
 #include <Windows.h>//MessageBox
+#else
+#include <iostream>
+#endif // _WIN32
+
+#ifdef _WIN32
+#define HMessageBox(str) MessageBoxA(NULL, str, "Message Box", MB_OK);
+#else
+#define HMessageBox(str)\
+show_model = true;\
+model_message = str;
+#endif
+
+#ifdef _WIN32
+#define HBeep() Beep(100, 100);
+#else
+#define HMessageBox(str) std::cout << "\a";
+#endif
+
+
 void ThreadWidget(const char* label, ImColor col, const ImVec2& size_arg = ImVec2(-1,25))
 {
 	ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -43,12 +62,13 @@ HPNS_REG_COMMAND(model, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkOb
 	model_message = data.get<std::string>();
 })
 
+
 HPNS_REG_COMMAND(MessageBox, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device) {
-	MessageBoxA(NULL, data.get<std::string>().c_str(), "Message Box", MB_OK);
+	HMessageBox(data.get<std::string>().c_str());
 })
 
 HPNS_REG_COMMAND(Beep, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device) {
-	Beep(100, 100);
+	HBeep();
 })
 
 std::string server_ip="127.0.0.1";
