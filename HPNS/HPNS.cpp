@@ -38,12 +38,20 @@ SOFTWARE.
 
 
 #ifndef _WIN32
-#error HPNS : The current version can only be used on the window platform (目前版本只能使用在 window 平臺上)
+#include <cstring>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+typedef struct sockaddr HSOCKADDR;
 #else
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <WinSock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib,"Ws2_32.lib")
+typedef SOCKADDR HSOCKADDR;
 #endif // _WIN32
 
 HPNS::Context::HContext* global_context = nullptr;
@@ -190,9 +198,13 @@ void HPNS::Internal::Base_NetworkObject::release_command_list()
 //---------------------------------------------TCP_IP4-------------------------------------
 struct TCP_IP4_Server_Context
 {
+#ifdef _WIN32
 	WSADATA wd;
-	SOCKET sListen;
-	sockaddr_in addr;
+#else
+	int opt=1;
+#endif // _WIN32
+	struct sockaddr_in addr;
+	HPNS::ConnectDevice sListen;
 	fd_set  readSet;//定义一个读（接受消息）的集合
 	int thread_count_ = 0;
 };
@@ -217,11 +229,13 @@ HPNS::Server::TCP_IP4::TCP_IP4( HPort port, const char* ip, int thread_count)
 		TCP_IP4_CTX.thread_count_ = thread_count;
 	}
 
+#ifdef _WIN32
 	if (WSAStartup(MAKEWORD(2, 2), &TCP_IP4_CTX.wd) == SOCKET_ERROR)
 	{
 		throw HPNS_Exception("WSAStartup  error code : %d",GetLastError());
 		return;
 	}
+#endif // _WIN32
 
 
 	TCP_IP4_CTX.sListen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -231,24 +245,31 @@ HPNS::Server::TCP_IP4::TCP_IP4( HPort port, const char* ip, int thread_count)
 		return;
 	}
 
-#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
-	TCP_IP4_CTX.addr.sin_addr.S_un.S_addr = inet_addr(ip);
+#ifndef _WIN32
+	setsockopt(TCP_IP4_CTX.sListen, SOL_SOCKET, SO_REUSEADDR, &TCP_IP4_CTX.opt, sizeof(TCP_IP4_CTX.opt));
+#endif // _WIN32
+
+#ifdef _WIN32
+	#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
+	TCP_IP4_CTX.addr.sin_addr.s_addr = inet_addr(ip);
+	#else
+		if (inet_pton(AF_INET, ip, &TCP_IP4_CTX.addr.sin_addr) <= 0) {
+			throw HPNS_Exception("Invalid address/ Address not supported");
+			return;
+		}
+	#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
 #else
-	if (inet_pton(AF_INET, ip, &TCP_IP4_CTX.addr.sin_addr) <= 0) {
-		throw HPNS_Exception("Invalid address/ Address not supported");
-		return;
-	}
-#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
-	//TCP_IP4_CTX.addr.sin_addr.S_un.S_addr = INADDR_ANY;
-	TCP_IP4_CTX.addr.sin_port = htons(port);
+	TCP_IP4_CTX.addr.sin_addr.s_addr = inet_addr(ip);
+#endif // _WIN32
 	TCP_IP4_CTX.addr.sin_family = AF_INET;
+	TCP_IP4_CTX.addr.sin_port = htons(port);
 }
 
 
 void HPNS::Server::TCP_IP4::Listen()
 {
-	int len = sizeof(sockaddr_in);
-	if (bind(TCP_IP4_CTX.sListen, (SOCKADDR*)&TCP_IP4_CTX.addr, len) == SOCKET_ERROR)
+	int len = sizeof(struct sockaddr_in);
+	if (bind(TCP_IP4_CTX.sListen, (HSOCKADDR*)&TCP_IP4_CTX.addr, len) == SOCKET_ERROR)
 	{
 		throw HPNS_Exception("bind  error: %d", GetLastError());
 		return;
@@ -303,11 +324,11 @@ void HPNS::Server::TCP_IP4::Update()
 
 	for (size_t i = 0; i < tmpSet.fd_count; i++)
 	{
-		SOCKET client_connet = tmpSet.fd_array[i];
+		HPNS::ConnectDevice client_connet = tmpSet.fd_array[i];
 
 		if (client_connet == TCP_IP4_CTX.sListen)
 		{
-			SOCKET client = accept(client_connet, NULL, NULL);
+			HPNS::ConnectDevice client = accept(client_connet, NULL, NULL);
 			if (TCP_IP4_CTX.readSet.fd_count < FD_SETSIZE)
 			{
 				FD_SET(client, &TCP_IP4_CTX.readSet);
@@ -386,23 +407,29 @@ const char* HPNS::Server::TCP_IP4::MSG_GetDeviceIP(HPNS::ConnectDevice device)
 {
 	sockaddr_in localAddr;
 	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (sockaddr*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
 		throw HPNS_Exception("getsockname failed.");
 	}
 	else {
-#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
-		return inet_ntoa(localAddr.sin_addr);
+#ifdef _WIN32
+	#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
+			return inet_ntoa(localAddr.sin_addr);
+	#else
+			char ipStr[INET_ADDRSTRLEN];
+			if (inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, sizeof(ipStr)) != nullptr) {
+				printf("IP Address: %s", ipStr);
+				std::string buff = ipStr;
+				return buff.data();
+			}
+			else {
+				return "inet_ntop failed";
+			}
+	#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
 #else
-		char ipStr[INET_ADDRSTRLEN];
-		if (inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, sizeof(ipStr)) != nullptr) {
-			printf("IP Address: %s", ipStr);
-			std::string buff = ipStr;
-			return buff.data();
-		}
-		else {
-			return "inet_ntop failed";
-		}
-#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
+		return inet_ntoa(localAddr.sin_addr);
+#endif // _WIN32
+
+
 	}
 	return "null";
 }
@@ -423,9 +450,11 @@ bool HPNS::Server::TCP_IP4::MSG_CloseClientConnet(HPNS::ConnectDevice device)
 #if HPNS_CLIENT_ACTIVATE
 struct TCP_IP4_Client_Context
 {
+#ifdef _WIN32
 	WSADATA wd;
-	SOCKET Server;
-	sockaddr_in addr;
+#endif
+	HPNS::ConnectDevice Server;
+	struct sockaddr_in addr;
 	int thread_count_ = 0;
 };
 
@@ -446,22 +475,32 @@ HPNS::Client::TCP_IP4::TCP_IP4(const char* ip, HPort port, int thread_count)
 		TCP_IP4_CTX.thread_count_ = thread_count;
 	}
 
+#ifdef _WIN32
 	if (WSAStartup(MAKEWORD(2, 2), &TCP_IP4_CTX_CLI.wd) != 0)
 	{
 		throw HPNS_Exception("WSAStartup  error code : %d", GetLastError());
 		return ;
 	}
+#endif // _WIN32
+
+
 
 	TCP_IP4_CTX_CLI.addr.sin_family = AF_INET;
 	TCP_IP4_CTX_CLI.addr.sin_port = htons(port);
-#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
-	TCP_IP4_CTX_CLI.addr.sin_addr.S_un.S_addr = inet_addr(ip);
+#ifdef _WIN32
+	#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
+		TCP_IP4_CTX_CLI.addr.sin_addr.s_addr = inet_addr(ip);
+	#else
+		if (inet_pton(AF_INET, ip, &TCP_IP4_CTX.addr.sin_addr) <= 0) {
+			throw HPNS_Exception("Invalid address/ Address not supported");
+			return;
+		}
+	#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
 #else
-	if (inet_pton(AF_INET, ip, &TCP_IP4_CTX.addr.sin_addr) <= 0) {
-		throw HPNS_Exception("Invalid address/ Address not supported");
-		return;
-	}
-#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
+	TCP_IP4_CTX_CLI.addr.sin_addr.s_addr = inet_addr(ip);
+#endif // DEBUG
+
+
 
 
 }
@@ -493,7 +532,7 @@ bool HPNS::Client::TCP_IP4::Connect()
 		return false;
 	}
 
-	int len = sizeof(sockaddr_in);
+	int len = sizeof(struct sockaddr_in);
 	if (connect(TCP_IP4_CTX_CLI.Server, (SOCKADDR*)&TCP_IP4_CTX_CLI.addr, len) == SOCKET_ERROR)
 	{
 		throw HPNS_Exception("connect  error : %d", GetLastError());
@@ -559,23 +598,29 @@ const char* HPNS::Client::TCP_IP4::MSG_GetDeviceIP(HPNS::ConnectDevice device)
 {
 	sockaddr_in localAddr;
 	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (sockaddr*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
 		throw HPNS_Exception("getsockname failed.");
 	}
 	else {
-#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
-		return inet_ntoa(localAddr.sin_addr);
+#ifdef _WIN32
+	#ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
+			return inet_ntoa(localAddr.sin_addr);
+	#else
+			char ipStr[INET_ADDRSTRLEN];
+			if (inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, sizeof(ipStr)) != nullptr) {
+				printf("IP Address: %s", ipStr);
+				std::string buff = ipStr;
+				return buff.data();
+			}
+			else {
+				return "inet_ntop failed";
+			}
+	#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
 #else
-		char ipStr[INET_ADDRSTRLEN];
-		if (inet_ntop(AF_INET, &localAddr.sin_addr, ipStr, sizeof(ipStr)) != nullptr) {
-			printf("IP Address: %s", ipStr);
-			std::string buff = ipStr;
-			return buff.data();
-		}
-		else {
-			return "inet_ntop failed";
-		}
-#endif // _WINSOCK_DEPRECATED_NO_WARNINGS
+		return inet_ntoa(localAddr.sin_addr);
+#endif // _WIN32
+
+
 	}
 	return "null";
 }
@@ -593,7 +638,7 @@ bool HPNS::Client::TCP_IP4::MSG_IsConnected(HPNS::ConnectDevice device)
 {
 	sockaddr_in localAddr;
 	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (sockaddr*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
 		return false;
 	}
 

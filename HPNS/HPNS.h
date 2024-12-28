@@ -70,6 +70,9 @@ namespace HPNS
 #ifdef _WIN32
 	typedef unsigned __int64 ConnectDevice;
 	typedef unsigned short HPort;
+#else
+	typedef int ConnectDevice;
+	typedef int HPort;
 #endif // _WIN32
 }
 
