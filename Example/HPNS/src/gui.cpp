@@ -20,7 +20,7 @@ model_message = str;
 #ifdef _WIN32
 #define HBeep() Beep(100, 100);
 #else
-#define HMessageBox(str) std::cout << "\a";
+#define HBeep() std::cout << "\a";
 #endif
 
 
