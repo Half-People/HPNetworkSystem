@@ -84,6 +84,11 @@ namespace HPNS::Internal
 		std::function <void(ConnectDevice, Base_NetworkObject*)> ServerCapacityExceeded;
 		std::function <void(std::vector<char>&)> SendMessageEncrypted;
 		std::function <void(std::vector<char>&)> ReceiveMessageDecryption;
+
+		std::function <void(std::vector<char>&, ConnectDevice, Base_NetworkObject*)> SendMessageEncrypted_Ex;
+		std::function <void(std::vector<char>&, ConnectDevice, Base_NetworkObject*)> ReceiveMessageDecryption_Ex;
+
+		std::function <void(std::string,Base_NetworkObject*)> NetworkSystemThreadExistError;
 	};
 
 	class Base_NetworkObject
@@ -93,7 +98,7 @@ namespace HPNS::Internal
 		// main
 
 		virtual void Start(bool thread_activate = false);
-		virtual void Close() { working = false; if (working_thread != nullptr) { delete working_thread; working_thread = nullptr; } }
+		virtual void Close();
 		inline bool IsWorking() { return working; }
 
 		inline CallbackIO& SetupCallback() { return	callbacks; }
@@ -113,12 +118,15 @@ namespace HPNS::Internal
 		virtual bool MSG_SendMessageToClient(HPNS::ConnectDevice device, const char* command_name, nlohmann::json data = nlohmann::json()) { return false; }
 		virtual const char* MSG_GetDeviceIP(HPNS::ConnectDevice device) { return "null"; }
 		virtual bool MSG_CloseClientConnet(HPNS::ConnectDevice device) { return false; }
+		virtual bool MSG_IsConnected(HPNS::ConnectDevice device) { return false; }
 		//message - client
 #if HPNS_CLIENT_ACTIVATE
 		virtual bool Client_SendMessageToServer(const char* command_name, nlohmann::json data = nlohmann::json()) { return false; }
 		virtual const char* Client_GetDeviceIP() { return "null"; }
 		virtual bool Client_CloseClientConnet() { return false; }
+		virtual bool Client_IsConnected() { return false; }
 #endif // HPNS_CLIENT_ACTIVATE
+		void* message_buffer = nullptr;//Reserved for users to save information (will be automatically deleted)
 	protected:
 		void* network_context = nullptr;
 		void* command_list = nullptr;
@@ -170,10 +178,12 @@ namespace HPNS::Client
 		virtual bool MSG_SendMessageToClient(HPNS::ConnectDevice device, const char* command_name, nlohmann::json data = nlohmann::json())override;
 		virtual const char* MSG_GetDeviceIP(HPNS::ConnectDevice device)override;
 		virtual bool MSG_CloseClientConnet(HPNS::ConnectDevice device)override;
+		virtual bool Client_IsConnected() override;
 
 		virtual bool Client_SendMessageToServer(const char* command_name, nlohmann::json data = nlohmann::json())override;
 		virtual const char* Client_GetDeviceIP()override;
 		virtual bool Client_CloseClientConnet()override;
+		virtual bool MSG_IsConnected(HPNS::ConnectDevice device) override;
 	private:
 
 	};
@@ -216,9 +226,9 @@ namespace HPNS::Context
 		void push_task(const Task task);
 		inline void push_task(std::string command_name,nlohmann::json data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device) {push_task(Task(command_name,data, network_system, device));}
 		//info
-		inline size_t get_current_thread_count() { return thread_count; }
+		size_t get_current_thread_count();
+		size_t get_task_count();
 	private:
-		size_t thread_count = 0;
 		void* thread_pool_context = nullptr;
 	};
 
@@ -236,7 +246,7 @@ namespace HPNS::Context
 		virtual bool call_command(std::string command_name, nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system,HPNS::ConnectDevice device);
 		virtual void insert_commands(HContext* context,bool cover = false);
 		virtual void clear_command();
-
+		std::vector<std::string> get_all_command();
 
 		size_t current_thread_count = 0;
 		size_t max_thread_count = 0;

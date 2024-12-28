@@ -80,6 +80,8 @@ public:
 //BaseNetworkSystemClass
 void HPNS::Internal::Base_NetworkObject::Start(bool thread_activate)
 {
+	if (working)
+		return;
 	working = true;
 
 	if (thread_activate && working_thread == nullptr)
@@ -92,11 +94,25 @@ void HPNS::Internal::Base_NetworkObject::Start(bool thread_activate)
 			return;
 		}
 		working_thread = new std::thread([&]() {
-			while (working) {Update();}
+			while (working) {
+				try
+				{
+					Update();
+				}
+				catch (const std::exception& err)
+				{
+					callbacks.NetworkSystemThreadExistError(err.what(), this);
+				}
+
+			}
 		});
 	}
 	else
 		while (working) { Update(); }
+}
+void HPNS::Internal::Base_NetworkObject::Close()
+{
+	working = false; if (working_thread != nullptr) { Client_CloseClientConnet(); static_cast<std::thread*>(working_thread)->join(); delete working_thread; working_thread = nullptr; HPNS::Context::GetCurrentContext()->current_thread_count--; }
 }
 void HPNS::Internal::Base_NetworkObject::push_command(const char* command_name, std::function<void(nlohmann::json&, HPNS::Internal::Base_NetworkObject*,HPNS::ConnectDevice)> function, bool cover)
 {
@@ -251,6 +267,7 @@ void HPNS::Server::TCP_IP4::Listen()
 
 HPNS::Server::TCP_IP4::~TCP_IP4()
 {
+	if (working){Close();}
 	release_command_list();
 	closesocket(TCP_IP4_CTX.sListen);
 	global_context->thread_pool.pop_thread(TCP_IP4_CTX.thread_count_);
@@ -258,6 +275,11 @@ HPNS::Server::TCP_IP4::~TCP_IP4()
 	{
 		delete network_context;
 		network_context = nullptr;
+	}
+	if (message_buffer!=nullptr)
+	{
+		delete message_buffer;
+		message_buffer = nullptr;
 	}
 }
 
@@ -296,6 +318,7 @@ void HPNS::Server::TCP_IP4::Update()
 			{
 				if(callbacks.ServerCapacityExceeded)
 					callbacks.ServerCapacityExceeded(client_connet, this);
+
 				throw HPNS_Exception("The number of clients is greater than the server client capacity (客戶端數量大於伺服器客戶端容量)");
 			}
 		}
@@ -317,6 +340,8 @@ void HPNS::Server::TCP_IP4::Update()
 					buffer.resize(ret);
 					if (callbacks.ReceiveMessageDecryption)
 						callbacks.ReceiveMessageDecryption(buffer);
+					if (callbacks.ReceiveMessageDecryption_Ex)
+						callbacks.ReceiveMessageDecryption_Ex(buffer,client_connet,this);
 					
 					nlohmann::json message = nlohmann::json::from_msgpack(buffer, ret);
 					printf("\n recv message - command : %s", message["cmd"].get<std::string>().c_str());
@@ -352,6 +377,8 @@ bool HPNS::Server::TCP_IP4::MSG_SendMessageToClient(HPNS::ConnectDevice device, 
 	}
 	if (callbacks.SendMessageEncrypted)
 		callbacks.SendMessageEncrypted(msg_buffer);
+	if (callbacks.SendMessageEncrypted_Ex)
+		callbacks.SendMessageEncrypted_Ex(msg_buffer,device,this);
 	return send(device, msg_buffer.data(), msg_buffer.size(), 0)>0;
 }
 
@@ -425,13 +452,6 @@ HPNS::Client::TCP_IP4::TCP_IP4(const char* ip, HPort port, int thread_count)
 		return ;
 	}
 
-	TCP_IP4_CTX_CLI.Server =  socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (TCP_IP4_CTX_CLI.Server == INVALID_SOCKET)
-	{
-		throw HPNS_Exception("socket  error code : %d", GetLastError());
-		return;
-	}
-
 	TCP_IP4_CTX_CLI.addr.sin_family = AF_INET;
 	TCP_IP4_CTX_CLI.addr.sin_port = htons(port);
 #ifdef _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -448,6 +468,7 @@ HPNS::Client::TCP_IP4::TCP_IP4(const char* ip, HPort port, int thread_count)
 
 HPNS::Client::TCP_IP4::~TCP_IP4()
 {
+	if (working) { Close(); }
 	release_command_list();
 	closesocket(TCP_IP4_CTX_CLI.Server);
 	global_context->thread_pool.pop_thread(TCP_IP4_CTX_CLI.thread_count_);
@@ -456,11 +477,22 @@ HPNS::Client::TCP_IP4::~TCP_IP4()
 		delete network_context;
 		network_context = nullptr;
 	}
-
+	if (message_buffer != nullptr)
+	{
+		delete message_buffer;
+		message_buffer = nullptr;
+	}
 }
 
 bool HPNS::Client::TCP_IP4::Connect()
 {
+	TCP_IP4_CTX_CLI.Server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (TCP_IP4_CTX_CLI.Server == INVALID_SOCKET)
+	{
+		throw HPNS_Exception("socket  error code : %d", GetLastError());
+		return false;
+	}
+
 	int len = sizeof(sockaddr_in);
 	if (connect(TCP_IP4_CTX_CLI.Server, (SOCKADDR*)&TCP_IP4_CTX_CLI.addr, len) == SOCKET_ERROR)
 	{
@@ -476,10 +508,9 @@ void HPNS::Client::TCP_IP4::Update()
 {
 	std::vector<char> buffer(HPNS_RECV_BUFFER_SIZE);
 	int ret = recv(TCP_IP4_CTX_CLI.Server, buffer.data(), HPNS_RECV_BUFFER_SIZE, 0);
-	if (ret <= 0)
+	if (ret == 0 || ret == SOCKET_ERROR)
 	{
-		if (callbacks.ClientLeaves)
-			callbacks.ClientLeaves(TCP_IP4_CTX_CLI.Server, this);
+		//Client_CloseClientConnet();
 		return;
 	}
 
@@ -488,6 +519,9 @@ void HPNS::Client::TCP_IP4::Update()
 		buffer.resize(ret);
 		if (callbacks.ReceiveMessageDecryption)
 			callbacks.ReceiveMessageDecryption(buffer);
+		if (callbacks.ReceiveMessageDecryption_Ex)
+			callbacks.ReceiveMessageDecryption_Ex(buffer, TCP_IP4_CTX_CLI.Server,this);
+
 		nlohmann::json message = nlohmann::json::from_msgpack(buffer, ret);
 		global_context->thread_pool.push_task(message["cmd"].get<std::string>(), message["data"], this, TCP_IP4_CTX_CLI.Server);
 	}
@@ -516,6 +550,8 @@ bool HPNS::Client::TCP_IP4::MSG_SendMessageToClient(HPNS::ConnectDevice device, 
 	}
 	if (callbacks.SendMessageEncrypted)
 		callbacks.SendMessageEncrypted(msg_buffer);
+	if (callbacks.SendMessageEncrypted_Ex)
+		callbacks.SendMessageEncrypted_Ex(msg_buffer,device,this);
 	return send(device, msg_buffer.data(), msg_buffer.size(), 0) > 0;
 }
 
@@ -548,8 +584,26 @@ bool HPNS::Client::TCP_IP4::MSG_CloseClientConnet(HPNS::ConnectDevice device)
 {
 	if (callbacks.ClientLeaves)
 		callbacks.ClientLeaves(device, this);
+
 	closesocket(device);
 	return true;
+}
+
+bool HPNS::Client::TCP_IP4::MSG_IsConnected(HPNS::ConnectDevice device)
+{
+	sockaddr_in localAddr;
+	int addrLen = sizeof(localAddr);
+	if (getsockname(device, (sockaddr*)&localAddr, &addrLen) == SOCKET_ERROR) {
+		return false;
+	}
+
+
+	return true;
+}
+
+bool HPNS::Client::TCP_IP4::Client_IsConnected()
+{
+	return MSG_IsConnected(TCP_IP4_CTX_CLI.Server);
 }
 
 bool HPNS::Client::TCP_IP4::Client_SendMessageToServer(const char* command_name, nlohmann::json data)
@@ -566,6 +620,8 @@ bool HPNS::Client::TCP_IP4::Client_CloseClientConnet()
 {
 	return MSG_CloseClientConnet(TCP_IP4_CTX_CLI.Server);
 }
+
+
 
 
 
@@ -705,6 +761,15 @@ void HPNS::Context::HContext::insert_commands(HContext* context, bool cover)
 
 void HPNS::Context::HContext::clear_command(){COMMAND_LIST.clear();}
 
+std::vector<std::string> HPNS::Context::HContext::get_all_command()
+{
+	std::vector<std::string> commands;
+	for (auto& cmd : COMMAND_LIST){
+		commands.push_back(cmd.first);
+	}
+	return commands;
+}
+
 //-----------------------------------------------------------------------------------------
 // Thread pool
 
@@ -754,7 +819,7 @@ int HPNS::Context::ThreadPool::push_thread(int count)
 				{
 					std::lock_guard<std::mutex> lock(TPCtx.thread_pool_mutex);
 					TPCtx.close_thread_count--;
-					thread_count--;
+					//thread_count--;
 					global_context->current_thread_count--;
 					TPCtx.remove_list.push_back( TPCtx.thread_list[std::this_thread::get_id()]);
 					TPCtx.thread_list.erase(std::this_thread::get_id());
@@ -762,7 +827,7 @@ int HPNS::Context::ThreadPool::push_thread(int count)
 				}
 
 				std::unique_lock<std::mutex> lock(TPCtx.thread_pool_mutex);
-				TPCtx.cv.wait(lock, [&] { return !TPCtx.task_list.empty() || TPCtx.close_thread_count > 0; });
+				TPCtx.cv.wait(lock, [&] { return !TPCtx.task_list.empty() || TPCtx.close_thread_count >= 0; });
 
 				if (TPCtx.task_list.empty())
 					continue;
@@ -790,7 +855,14 @@ int HPNS::Context::ThreadPool::push_thread(int count)
 
 int HPNS::Context::ThreadPool::pop_thread(int count)
 {
-	return TPCtx.close_thread_count = count;
+	TPCtx.close_thread_count += count;
+	TPCtx.cv.notify_one();
+	if (TPCtx.close_thread_count > TPCtx.thread_list.size())
+	{
+		TPCtx.close_thread_count = 0;
+		throw HPNS_Exception("Exceeded the number of popable threads " );
+	}
+	return TPCtx.close_thread_count;
 }
 
 void HPNS::Context::ThreadPool::join_all_thread()
@@ -814,6 +886,12 @@ void HPNS::Context::ThreadPool::clear_all_task()
 
 void HPNS::Context::ThreadPool::push_task(const Task task)
 {
+	if (task.command_name.empty())
+	{
+		throw HPNS_Exception("Pushed a null task");
+		return;
+	}
+
 	TPCtx.task_list.push(task);
 	TPCtx.cv.notify_one();
 
@@ -831,4 +909,14 @@ void HPNS::Context::ThreadPool::push_task(const Task task)
 		TPCtx.remove_list.clear();
 	}
 
+}
+
+size_t HPNS::Context::ThreadPool::get_current_thread_count()
+{
+	return TPCtx.thread_list.size();
+}
+
+size_t HPNS::Context::ThreadPool::get_task_count()
+{
+	return TPCtx.task_list.size();
 }
