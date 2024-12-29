@@ -45,15 +45,23 @@ SOFTWARE.
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <exception>
+#include <cstdarg>
+#include <cstdio>
 typedef struct sockaddr HSOCKADDR;
+#define HSOCKET_ERROR SO_ERROR
+#define GetLastError() errno
+#define closesocket close
 #else
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <WinSock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib,"Ws2_32.lib")
+#define HSOCKET_ERROR SOCKET_ERROR
 typedef SOCKADDR HSOCKADDR;
 #endif // _WIN32
 
+#define HINVALID_SOCKET (HPNS::ConnectDevice)(~0)
 HPNS::Context::HContext* global_context = nullptr;
 //-----------------------------------------------------------------------------------------
 //Exception
@@ -62,11 +70,11 @@ class HPNS_Exception : public std::exception
 public:
 	HPNS_Exception(const char* format, ...)
 	{
-		// Ê¹ÓÃ×ƒ…¢í¸ñÊ½»¯åeÕ`ĞÅÏ¢
+		// ä½¿ç”¨è®Šåƒä¾†æ ¼å¼åŒ–éŒ¯èª¤ä¿¡æ¯
 		va_list args;
 		va_start(args, format);
 
-		// Éú³ÉåeÕ`ĞÅÏ¢
+		// ç”ŸæˆéŒ¯èª¤ä¿¡æ¯
 		char buffer[256];
 		vsnprintf(buffer, sizeof(buffer), format, args);
 		message.append(buffer);
@@ -97,7 +105,7 @@ void HPNS::Internal::Base_NetworkObject::Start(bool thread_activate)
 		HPNS::Context::GetCurrentContext()->current_thread_count++;
 		if (global_context->current_thread_count > global_context->max_thread_count)
 		{
-			throw HPNS_Exception("Maximum number of threads exceeded  (³¬³ö×î´ó¾Q³Ì”µ)   %d/%d", global_context->current_thread_count, global_context->max_thread_count);
+			throw HPNS_Exception("Maximum number of threads exceeded  (è¶…å‡ºæœ€å¤§ç¶«ç¨‹æ•¸)   %d/%d", global_context->current_thread_count, global_context->max_thread_count);
 			global_context->current_thread_count--;
 			return;
 		}
@@ -127,14 +135,14 @@ void HPNS::Internal::Base_NetworkObject::push_command(const char* command_name, 
 	if (cover || !command_is_exist(command_name))
 		COMMAND_LIST[command_name] = function;
 	else
-		throw HPNS_Exception("A command with the same name already exists (command name :%s) (ÒÑ´æÔÚÍ¬ÃûµÄÃüÁî)", command_name);
+		throw HPNS_Exception("A command with the same name already exists (command name :%s) (å·²å­˜åœ¨åŒåçš„å‘½ä»¤)", command_name);
 }
 void HPNS::Internal::Base_NetworkObject::erase_command(const char* command_name)
 {
 	if (command_is_exist(command_name))
 		COMMAND_LIST.erase(command_name);
 	else
-		throw HPNS_Exception("Requesting to erase a non-existent command  ÕˆÇó„h³ı²»´æÔÚµÄÃüÁî  (command name : %s)", command_name);
+		throw HPNS_Exception("Requesting to erase a non-existent command  è«‹æ±‚åˆªé™¤ä¸å­˜åœ¨çš„å‘½ä»¤  (command name : %s)", command_name);
 }
 bool HPNS::Internal::Base_NetworkObject::command_is_exist(const char* command_name)
 {
@@ -156,7 +164,7 @@ void HPNS::Internal::Base_NetworkObject::insert_commands(Base_NetworkObject* net
 {
 	if (network_object == nullptr)
 	{
-		throw HPNS_Exception("insert commands context is null  ²åÈëÃüÁîÉÏÏÂÎÄé¿Õ");
+		throw HPNS_Exception("insert commands context is null  æ’å…¥å‘½ä»¤ä¸Šä¸‹æ–‡ç‚ºç©º");
 		return;
 	}
 
@@ -202,10 +210,11 @@ struct TCP_IP4_Server_Context
 	WSADATA wd;
 #else
 	int opt=1;
+	std::vector<HPNS::ConnectDevice> clients;
 #endif // _WIN32
 	struct sockaddr_in addr;
 	HPNS::ConnectDevice sListen;
-	fd_set  readSet;//¶¨ÒåÒ»¸ö¶Á£¨½ÓÊÜÏûÏ¢£©µÄ¼¯ºÏ
+	fd_set  readSet;//å®šä¹‰ä¸€ä¸ªè¯»ï¼ˆæ¥å—æ¶ˆæ¯ï¼‰çš„é›†åˆ
 	int thread_count_ = 0;
 };
 
@@ -230,7 +239,7 @@ HPNS::Server::TCP_IP4::TCP_IP4( HPort port, const char* ip, int thread_count)
 	}
 
 #ifdef _WIN32
-	if (WSAStartup(MAKEWORD(2, 2), &TCP_IP4_CTX.wd) == SOCKET_ERROR)
+	if (WSAStartup(MAKEWORD(2, 2), &TCP_IP4_CTX.wd) == HSOCKET_ERROR)
 	{
 		throw HPNS_Exception("WSAStartup  error code : %d",GetLastError());
 		return;
@@ -239,7 +248,7 @@ HPNS::Server::TCP_IP4::TCP_IP4( HPort port, const char* ip, int thread_count)
 
 
 	TCP_IP4_CTX.sListen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (TCP_IP4_CTX.sListen == INVALID_SOCKET)
+	if (TCP_IP4_CTX.sListen == HINVALID_SOCKET)
 	{
 		throw HPNS_Exception("socket error code : %d", GetLastError());
 		return;
@@ -269,20 +278,20 @@ HPNS::Server::TCP_IP4::TCP_IP4( HPort port, const char* ip, int thread_count)
 void HPNS::Server::TCP_IP4::Listen()
 {
 	int len = sizeof(struct sockaddr_in);
-	if (bind(TCP_IP4_CTX.sListen, (HSOCKADDR*)&TCP_IP4_CTX.addr, len) == SOCKET_ERROR)
+	if (bind(TCP_IP4_CTX.sListen, (HSOCKADDR*)&TCP_IP4_CTX.addr, len) == HSOCKET_ERROR)
 	{
 		throw HPNS_Exception("bind  error: %d", GetLastError());
 		return;
 	}
 
-	if (listen(TCP_IP4_CTX.sListen, 5) == SOCKET_ERROR)
+	if (listen(TCP_IP4_CTX.sListen, 5) == HSOCKET_ERROR)
 	{
 		throw HPNS_Exception("listen  error: %d", GetLastError());
 		return;
 	}
 
 
-	FD_ZERO(&TCP_IP4_CTX.readSet);//³õÊ¼»¯¼¯ºÏ
+	FD_ZERO(&TCP_IP4_CTX.readSet);//åˆå§‹åŒ–é›†åˆ
 	FD_SET(TCP_IP4_CTX.sListen, &TCP_IP4_CTX.readSet);
 }
 
@@ -310,49 +319,74 @@ void HPNS::Server::TCP_IP4::Update()
 	FD_ZERO(&tmpSet);
 	FD_SET(0, &tmpSet);
 	tmpSet = TCP_IP4_CTX.readSet;
-	struct timeval timeout; timeout.tv_sec = 2; // 5Ãë³¬•r timeout.tv_usec = 0
-
+	struct timeval timeout; timeout.tv_sec = 2; // 5ç§’è¶…æ™‚ timeout.tv_usec = 0
+	timeout.tv_usec = 0;
 
 	int ret = select(1, &tmpSet, NULL, NULL, &timeout);
 
-	if (ret == SOCKET_ERROR)
+	if (ret == HSOCKET_ERROR)
 	{
 		//throw HPNS_Exception("socket error :%d", WSAGetLastError());
 		return;
 	}
-
-
-	for (size_t i = 0; i < tmpSet.fd_count; i++)
+	else if(ret == 0)
 	{
-		HPNS::ConnectDevice client_connet = tmpSet.fd_array[i];
 
-		if (client_connet == TCP_IP4_CTX.sListen)
+	}
+
+
+
+#ifdef _WIN32
+	for (size_t i = 0; i < tmpSet.fd_count; i++)
+#else
+	for(size_t i = 0; i< FD_SETSIZE;i++)//TCP_IP4_CTX.clients.size();i++)
+#endif // _WIN32
+	{
+#ifdef _WIN32
+		HPNS::ConnectDevice client_connet = tmpSet.fd_array[i];
+#else
+		HPNS::ConnectDevice client_connet = tmpSet.fds_bits[i];//TCP_IP4_CTX.clients[i];
+#endif // !_WIN32
+		
+		if (TCP_IP4_CTX.sListen == client_connet)//(FD_ISSET(client_connet,&tmpSet))
 		{
-			HPNS::ConnectDevice client = accept(client_connet, NULL, NULL);
+			HPNS::ConnectDevice client = accept(TCP_IP4_CTX.sListen, NULL, NULL);
+
+#ifdef _WIN32
 			if (TCP_IP4_CTX.readSet.fd_count < FD_SETSIZE)
+#else
+			if (TCP_IP4_CTX.clients.size() < FD_SETSIZE)
+#endif // _WIN32
 			{
 				FD_SET(client, &TCP_IP4_CTX.readSet);
-				if(callbacks.ClientEntry)
-					callbacks.ClientEntry(client_connet, this);
+#ifndef _WIN32
+				TCP_IP4_CTX.clients.push_back(client);
+#endif // !_WIN32
+				if (callbacks.ClientEntry)
+					callbacks.ClientEntry(client, this);
 			}
 			else
 			{
-				if(callbacks.ServerCapacityExceeded)
-					callbacks.ServerCapacityExceeded(client_connet, this);
+				if (callbacks.ServerCapacityExceeded)
+					callbacks.ServerCapacityExceeded(client, this);
 
-				throw HPNS_Exception("The number of clients is greater than the server client capacity (¿Í‘ô¶Ë”µÁ¿´óì¶ËÅ·şÆ÷¿Í‘ô¶ËÈİÁ¿)");
+				//closesocket(client);
+				throw HPNS_Exception("The number of clients is greater than the server client capacity (å®¢æˆ¶ç«¯æ•¸é‡å¤§æ–¼ä¼ºæœå™¨å®¢æˆ¶ç«¯å®¹é‡)");
 			}
 		}
 		else
 		{
 			std::vector<char> buffer(HPNS_RECV_BUFFER_SIZE);
 			ret = recv(client_connet, buffer.data(), HPNS_RECV_BUFFER_SIZE, 0);
-			if (ret == SOCKET_ERROR || ret <=0)
+			if (ret == HSOCKET_ERROR || ret <= 0)
 			{
-				if(callbacks.ClientLeaves)
+				if (callbacks.ClientLeaves)
 					callbacks.ClientLeaves(client_connet, this);
 				closesocket(client_connet);
 				FD_CLR(client_connet, &TCP_IP4_CTX.readSet);
+#ifndef _WIN32
+				TCP_IP4_CTX.clients.erase(TCP_IP4_CTX.clients.begin() + i);
+#endif // !1
 			}
 			else
 			{
@@ -362,15 +396,15 @@ void HPNS::Server::TCP_IP4::Update()
 					if (callbacks.ReceiveMessageDecryption)
 						callbacks.ReceiveMessageDecryption(buffer);
 					if (callbacks.ReceiveMessageDecryption_Ex)
-						callbacks.ReceiveMessageDecryption_Ex(buffer,client_connet,this);
-					
+						callbacks.ReceiveMessageDecryption_Ex(buffer, client_connet, this);
+
 					nlohmann::json message = nlohmann::json::from_msgpack(buffer, ret);
 					printf("\n recv message - command : %s", message["cmd"].get<std::string>().c_str());
 					global_context->thread_pool.push_task(message["cmd"].get<std::string>(), message["data"], this, client_connet);
 				}
 				catch (const nlohmann::json::exception& err)
 				{
-					throw HPNS_Exception("recv message json unpack error : %s",err.what());
+					throw HPNS_Exception("recv message json unpack error : %s", err.what());
 				}
 
 			}
@@ -406,8 +440,8 @@ bool HPNS::Server::TCP_IP4::MSG_SendMessageToClient(HPNS::ConnectDevice device, 
 const char* HPNS::Server::TCP_IP4::MSG_GetDeviceIP(HPNS::ConnectDevice device)
 {
 	sockaddr_in localAddr;
-	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	socklen_t addrLen = sizeof(localAddr);
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == HSOCKET_ERROR) {
 		throw HPNS_Exception("getsockname failed.");
 	}
 	else {
@@ -440,6 +474,17 @@ bool HPNS::Server::TCP_IP4::MSG_CloseClientConnet(HPNS::ConnectDevice device)
 		callbacks.ClientLeaves(device, this);
 	closesocket(device);
 	FD_CLR(device, &TCP_IP4_CTX.readSet);
+#ifndef _WIN32
+	for (size_t i = 0; i < TCP_IP4_CTX.clients.size(); i++)
+	{
+		if (device == TCP_IP4_CTX.clients[i])
+		{
+			TCP_IP4_CTX.clients.erase(TCP_IP4_CTX.clients.begin() + i);
+			break;
+		}
+	}
+#endif // !_WIN32
+
 	return true;
 }
 
@@ -526,14 +571,14 @@ HPNS::Client::TCP_IP4::~TCP_IP4()
 bool HPNS::Client::TCP_IP4::Connect()
 {
 	TCP_IP4_CTX_CLI.Server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (TCP_IP4_CTX_CLI.Server == INVALID_SOCKET)
+	if (TCP_IP4_CTX_CLI.Server == HINVALID_SOCKET)
 	{
 		throw HPNS_Exception("socket  error code : %d", GetLastError());
 		return false;
 	}
 
 	int len = sizeof(struct sockaddr_in);
-	if (connect(TCP_IP4_CTX_CLI.Server, (SOCKADDR*)&TCP_IP4_CTX_CLI.addr, len) == SOCKET_ERROR)
+	if (connect(TCP_IP4_CTX_CLI.Server, (HSOCKADDR*)&TCP_IP4_CTX_CLI.addr, len) == HSOCKET_ERROR)
 	{
 		throw HPNS_Exception("connect  error : %d", GetLastError());
 		return false;
@@ -547,7 +592,7 @@ void HPNS::Client::TCP_IP4::Update()
 {
 	std::vector<char> buffer(HPNS_RECV_BUFFER_SIZE);
 	int ret = recv(TCP_IP4_CTX_CLI.Server, buffer.data(), HPNS_RECV_BUFFER_SIZE, 0);
-	if (ret == 0 || ret == SOCKET_ERROR)
+	if (ret == 0 || ret == HSOCKET_ERROR)
 	{
 		//Client_CloseClientConnet();
 		return;
@@ -596,9 +641,9 @@ bool HPNS::Client::TCP_IP4::MSG_SendMessageToClient(HPNS::ConnectDevice device, 
 
 const char* HPNS::Client::TCP_IP4::MSG_GetDeviceIP(HPNS::ConnectDevice device)
 {
-	sockaddr_in localAddr;
-	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	struct sockaddr_in localAddr;
+	socklen_t addrLen = sizeof(localAddr);
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == HSOCKET_ERROR) {
 		throw HPNS_Exception("getsockname failed.");
 	}
 	else {
@@ -637,8 +682,8 @@ bool HPNS::Client::TCP_IP4::MSG_CloseClientConnet(HPNS::ConnectDevice device)
 bool HPNS::Client::TCP_IP4::MSG_IsConnected(HPNS::ConnectDevice device)
 {
 	sockaddr_in localAddr;
-	int addrLen = sizeof(localAddr);
-	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == SOCKET_ERROR) {
+	socklen_t addrLen = sizeof(localAddr);
+	if (getsockname(device, (HSOCKADDR*)&localAddr, &addrLen) == HSOCKET_ERROR) {
 		return false;
 	}
 
@@ -698,7 +743,7 @@ HPNS::Context::HContext* HPNS::Context::GetCurrentContext()
 void HPNS::Context::SetCurrentContext(HContext* new_context)
 {
 	if(new_context==nullptr)
-		throw HPNS_Exception("\"new_context\" is empty (\"new_context\"  ‘¿Õ)");
+		throw HPNS_Exception("\"new_context\" is empty (\"new_context\" çˆ²ç©º)");
 	if (global_context != nullptr)
 		ReleaseContext();
 	global_context = new_context;
@@ -755,7 +800,7 @@ void HPNS::Context::HContext::push_command(const char* command_name, std::functi
 	if(cover||!command_is_exist(command_name))
 		COMMAND_LIST[command_name]= function;
 	else
-		throw HPNS_Exception("A command with the same name already exists (command name :%s) (ÒÑ´æÔÚÍ¬ÃûµÄÃüÁî)",command_name);
+		throw HPNS_Exception("A command with the same name already exists (command name :%s) (å·²å­˜åœ¨åŒåçš„å‘½ä»¤)",command_name);
 }
 
 void HPNS::Context::HContext::erase_command(const char* command_name)
@@ -763,7 +808,7 @@ void HPNS::Context::HContext::erase_command(const char* command_name)
 	if (command_is_exist(command_name))
 		COMMAND_LIST.erase(command_name);
 	else
-		throw HPNS_Exception("Requesting to erase a non-existent command  ÕˆÇó„h³ı²»´æÔÚµÄÃüÁî  (command name : %s)", command_name);
+		throw HPNS_Exception("Requesting to erase a non-existent command  è«‹æ±‚åˆªé™¤ä¸å­˜åœ¨çš„å‘½ä»¤  (command name : %s)", command_name);
 }
 
 bool HPNS::Context::HContext::command_is_exist(const char* command_name)
@@ -777,7 +822,7 @@ bool HPNS::Context::HContext::call_command(std::string command_name, nlohmann::j
 	if (command != COMMAND_LIST.end())
 		command->second(data, network_system,device);
 	else
-		return false;//throw HPNS_Exception("Using non-existent command  ÕıÔÚÊ¹ÓÃ²»´æÔÚµÄÃüÁî  (command name : %s)", command_name);
+		return false;//throw HPNS_Exception("Using non-existent command  æ­£åœ¨ä½¿ç”¨ä¸å­˜åœ¨çš„å‘½ä»¤  (command name : %s)", command_name);
 	return true;
 }
 
@@ -785,7 +830,7 @@ void HPNS::Context::HContext::insert_commands(HContext* context, bool cover)
 {
 	if (context == nullptr)
 	{
-		throw HPNS_Exception("insert commands context is null  ²åÈëÃüÁîÉÏÏÂÎÄé¿Õ");
+		throw HPNS_Exception("insert commands context is null  æ’å…¥å‘½ä»¤ä¸Šä¸‹æ–‡ç‚ºç©º");
 		return;
 	}
 
@@ -852,7 +897,7 @@ int HPNS::Context::ThreadPool::push_thread(int count)
 		if (++global_context->current_thread_count > global_context->max_thread_count)
 		{
 			global_context->current_thread_count--;
-			throw HPNS_Exception("Maximum number of threads exceeded  (³¬³ö×î´ó¾Q³Ì”µ)   %d/%d", global_context->current_thread_count, global_context->max_thread_count);
+			throw HPNS_Exception("Maximum number of threads exceeded  (è¶…å‡ºæœ€å¤§ç¶«ç¨‹æ•¸)   %d/%d", global_context->current_thread_count, global_context->max_thread_count);
 			return -1;
 		}
 
