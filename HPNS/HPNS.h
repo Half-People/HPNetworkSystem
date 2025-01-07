@@ -33,7 +33,7 @@ SOFTWARE.
 
 
 //If it cannot run on your server, please update or download Visual C++ Redistributable 
-//如果在你的服務器上跑不了請更新或下載  Visual C++ Redistributable 
+//濡傛灉鍦ㄤ綘鐨勬湇鍕欏櫒涓婅窇涓嶄簡璜嬫洿鏂版垨涓嬭級  Visual C++ Redistributable 
 //https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
 
 
@@ -43,6 +43,7 @@ SOFTWARE.
 
 #define HPNS_SERVER_ACTIVATE true
 #define HPNS_CLIENT_ACTIVATE true
+#define HPNS_LOG_ACTIVATE true
 #define HPNS_RECV_BUFFER_SIZE 4096
 
 
@@ -92,6 +93,10 @@ namespace HPNS::Internal
 		std::function <void(std::vector<char>&, ConnectDevice, Base_NetworkObject*)> ReceiveMessageDecryption_Ex;
 
 		std::function <void(std::string,Base_NetworkObject*)> NetworkSystemThreadExistError;
+#ifdef HPNS_LOG_ACTIVATE
+		std::function<void(std::string, Base_NetworkObject*)> LogMessage;
+		bool ShowUpdataLog = false;
+#endif // HPNS_LOG_ACTIVATE
 	};
 
 	class Base_NetworkObject
@@ -254,6 +259,8 @@ namespace HPNS::Context
 		size_t current_thread_count = 0;
 		size_t max_thread_count = 0;
 		ThreadPool thread_pool;
+
+		std::function<void(std::string)> Subsystem_LogMessage_callback;
 	private:
 		void* command_list = nullptr;
 
