@@ -9,16 +9,9 @@
 #include <iostream>
 #endif // _WIN32
 
-#ifdef _WIN32
-#define HMessageBox(str) MessageBoxA(NULL, str, "Message Box", MB_OK);
-#else
-#define HMessageBox(str)\
-show_model = true;\
-model_message = str;
-#endif
 
 #ifdef _WIN32
-#define HBeep() Beep(100, 100);
+#define HBeep() Beep(1000, 100);Beep(500, 100);Beep(1000, 100);
 #else
 #define HBeep() std::cout << "\a";
 #endif
@@ -64,7 +57,7 @@ HPNS_REG_COMMAND(model, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkOb
 
 
 HPNS_REG_COMMAND(MessageBox, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device) {
-	HMessageBox(data.get<std::string>().c_str());
+	HMessageBox( "MessageBox",data.get<std::string>().c_str());
 })
 
 HPNS_REG_COMMAND(Beep, [&](nlohmann::json& data, HPNS::Internal::Base_NetworkObject* network_system, HPNS::ConnectDevice device) {
@@ -111,6 +104,9 @@ void push_log(std::string message,bool is_server,HPNS::Internal::Base_NetworkObj
 void GUI::init()
 {
 	context = HPNS::Context::CreateContext();
+	context->Subsystem_LogMessage_callback = [](std::string msg) {
+		push_log(msg, false, nullptr);
+	};
 	context->thread_pool.push_thread(1);
 	server_ip.resize(1024);
 	cserver_ip.resize(1024);
@@ -274,6 +270,14 @@ void GUI::init()
 		push_log(msg, server, obj);
 	};
 
+	Callback_base.LogMessage = [](std::string msg,HPNS::Internal::Base_NetworkObject* obj) {
+		bool server = false;
+		if (dynamic_cast<HPNS::Server::TCP_IP4*>(obj))
+		{
+			server = true;
+		}
+		push_log(msg, server, obj);
+	};
 }
 struct server_item
 {
@@ -292,39 +296,65 @@ std::vector<server_item> servers;
 
 HPNS::Server::TCP_IP4* select_server = nullptr;
 HPNS::Client::TCP_IP4* select_client = nullptr;
-
+void draw_show_updatamessage()
+{
+	static bool IsUpdata = false;
+	ImGui::Checkbox("ShowUpdataMessage", &IsUpdata);
+	for (auto& a : clients){
+		a.client->SetupCallback().ShowUpdataLog = IsUpdata;
+	}
+	for (auto& a : servers) {
+		a.server->SetupCallback().ShowUpdataLog = IsUpdata;
+	}
+}
 void MessageLog()
 {
 	if (ImGui::Begin("Message Log - Server"))
 	{
-		for (auto& msg : message_log)
+		draw_show_updatamessage();
+		if (ImGui::BeginListBox("###msglog-ser", ImVec2(-1, -1)))
 		{
-			if(msg.is_server&& msg.network != nullptr)
-				if (ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((int) & msg)).c_str()))
-				{
-					select_server = static_cast<HPNS::Server::TCP_IP4*>(msg.network);
-				}
+			for (auto& msg : message_log)
+			{
+				if(msg.is_server&& msg.network != nullptr)
+					if (ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((long long) & msg)).c_str()))
+					{
+						select_server = static_cast<HPNS::Server::TCP_IP4*>(msg.network);
+					}
+			}
 		}
+		ImGui::EndListBox();
+
 	}ImGui::End();
 
 	if (ImGui::Begin("Message Log - Client"))
 	{
-		for (auto& msg : message_log)
+		draw_show_updatamessage();
+		if (ImGui::BeginListBox("###msglog-cli", ImVec2(-1, -1)))
 		{
-			if(!msg.is_server&& msg.network != nullptr)
-				if (ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((int)&msg)).c_str()))
-				{
-					select_client = static_cast<HPNS::Client::TCP_IP4*>(msg.network);
-				}
+			for (auto& msg : message_log)
+			{
+				if(!msg.is_server&& msg.network != nullptr)
+					if (ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((long long)&msg)).c_str()))
+					{
+						select_client = static_cast<HPNS::Client::TCP_IP4*>(msg.network);
+					}
+			}
 		}
+		ImGui::EndListBox();
 	}ImGui::End();
 
 	if (ImGui::Begin("Message Log"))
 	{
-		for (auto& msg : message_log)
+		draw_show_updatamessage();
+		if (ImGui::BeginListBox("###msglog",ImVec2(-1,-1)))
 		{
-			ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((int)&msg)).c_str());
+			for (auto& msg : message_log)
+			{
+				ImGui::Selectable(std::string(msg.message).append("###").append(std::to_string((long long)&msg)).c_str());
+			}
 		}
+		ImGui::EndListBox();
 	}ImGui::End();
 }
 
@@ -501,7 +531,7 @@ void ServerList(float list_size)
 			select_server = it.server;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(std::string("x###").append(std::to_string((int)it.server)).c_str()))
+		if (ImGui::Button(std::string("x###").append(std::to_string((long long)it.server)).c_str()))
 		{
 			try
 			{
@@ -525,12 +555,12 @@ void ClientList(float size)
 	for (size_t i = 0; i < clients.size(); i++)
 	{
 		client_item& it = clients[i];
-		if (ImGui::Selectable(std::string("clienr connect server:").append(it.ip).append(":").append(std::to_string(it.port)).append("###").append(std::to_string((int) & it)).c_str(), it.client == select_client, 0, ImVec2(size - 50, 0)))
+		if (ImGui::Selectable(std::string("clienr connect server:").append(it.ip).append(":").append(std::to_string(it.port)).append("###").append(std::to_string((long long) & it)).c_str(), it.client == select_client, 0, ImVec2(size - 50, 0)))
 		{
 			select_client = it.client;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(std::string("x###").append(std::to_string((int)it.client)).c_str()))
+		if (ImGui::Button(std::string("x###").append(std::to_string((long long)it.client)).c_str()))
 		{
 			try
 			{
@@ -852,3 +882,4 @@ void GUI::updata()
 void GUI::close()
 {
 }
+
